@@ -1,0 +1,687 @@
+---
+title: "Hands on I - Supervised Learning"
+subtitle: "Data Mining and Data Integration in Biomedicine"
+author: "Anna Korda"
+date: "March, 2025"
+date-format: "MMMM, YYYY"
+format:  
+  html: 
+    text: \setupinterlinespace{1}
+    toc: true
+    css: styles.css
+  pdf: 
+    text: \setupinterlinespace{1}
+    fontsize: 13pt
+    toc: true
+editor: visual
+code-line-numbers: true
+fig-align: left
+---
+
+\newpage
+
+# 1. Analysis of the Heart Disease Dataset
+
+Load the data from [here](https://raw.githubusercontent.com/jpinero/DMI_2021/main/datasets/heart_disease_dataset.csv), and the description is [here](https://raw.githubusercontent.com/jpinero/DMI_2021/main/datasets/heart_disease_description.txt). The original dataset comes from [here](https://archive.ics.uci.edu/ml/datasets/Heart+Disease) and corresponds to the [processed cleveland data](https://archive.ics.uci.edu/ml/machine-learning-databases/heart-disease/processed.cleveland.data)
+
+## 1.1. Perform an EDA on the dataset
+
+We will first start by reading the file containing our data.
+
+```{r}
+dataset <- read.csv(file = "data/heart_disease_dataset.csv", sep = " ", header = T, dec = ".", stringsAsFactors = F)
+```
+
+We can see our data has 303 rows, corresponding to individuals or patients, and 15 columns, one that identifies each individual and 14 different attributes.
+
+The description of each attribute can be checked here:
+
+-   **Age**: age in years.
+
+-   **Sex**: sex (1 = male; 0 = female).
+
+-   **Cp**: chest pain type.
+
+    -   Value 1: typical angina.
+    -   Value 2: atypical angina.
+    -   Value 3: non-anginal pain.
+    -   Value 4: asymptomatic.
+
+-   **Trestbps**: resting blood pressure (in mm Hg on admission to the hospital).
+
+-   **Chol**: serum cholestoral in mg/dl.
+
+-   **Fbs**: fasting blood sugar \> 120 mg/dl (1 = true; 0 = false)
+
+-   **Restecg**: resting electrocardiographic results.
+
+    -   Value 0: normal.
+    -   Value 1: having ST-T wave abnormality (T wave inversions and/or ST elevation or depression of \> 0.05 mV).
+    -   Value 2: showing probable or definite left ventricular hypertrophy by Estes' criteria.
+
+-   **Thalach**: maximum heart rate achieved.
+
+-   **Exang**: exercise induced angina (1 = yes; 0 = no).
+
+-   **Oldpeak**: T depression induced by exercise relative to rest.
+
+-   **Slope**: the slope of the peak exercise ST segment:
+
+    -   Value 1: upsloping.
+    -   Value 2: flat.
+    -   Value 3: downsloping.
+
+-   **Ca**: number of major vessels (0-3) colored by flourosopy.
+
+-   **Thal**: 3 = normal; 6 = fixed defect; 7 = reversable defect.
+
+-   **Num**: diagnosis of heart disease (angiographic disease status).
+
+    -   Value 0: \< 50% diameter narrowing.
+    -   Value 1: \> 50% diameter narrowing.
+
+### 1.1.1. Data cleaning and missing data
+
+Once we have our data and we have familiarized ourselves with its attributes, we should check for any potential missing/incorrect data. To do so we can use the package `dplyr` and `fauxanif`, which includes functions such as `na_if_in()` or `na_if_not()`. We will "transform" any missing data, represented with a -9, as well as any data that we consider incorrect or improbable, with an `NA` value.
+
+```{r load-libraries, message=FALSE, warning=FALSE}
+library(dplyr)
+library(fauxnaif)
+
+dataset <- dataset %>% mutate(
+  age = na_if_not(age, 18:100), 
+  across(c(sex, fbs, exang), na_if_not, c(0,1)),
+  cp = na_if_not(cp, 1:4),
+  trestbps = na_if_not(trestbps, 80:200),
+  # ? chol = na_if_not()
+  restecg = na_if_not(restecg, 0:2),
+  thalach = na_if_not(thalach, 60:210),
+  oldpeak = na_if_in(oldpeak, ~ . < 0),
+  slope = na_if_not(slope, 1:3),
+  ca = na_if_not(ca, 0:3), 
+  thal = na_if_not(thal, c(3,6,7)),
+  num = na_if_not(num, 0:4)
+)
+
+```
+
+Afterwards, we will use the package `mice` to replace the missing values an estimated value. Before that, we can observe the missing data pattern using the function `md.pattern()`:
+
+```{r message=FALSE, warning=FALSE, fig.show = 'hide'}
+library(mice)
+md.pattern(dataset, rotate.names = TRUE)
+dataset$ca <- factor(dataset$ca, levels = c(0, 1, 2, 3))
+dataset$thal <- factor(dataset$thal, levels = c(3, 6, 7))
+methods <- c("","","","","","","","","","","","pmm","polyreg","","")
+names(methods) <- names(dataset)
+imputed_data <- mice(dataset, method = methods, m = 5, maxit = 100, seed = 123)
+dataset <- complete(imputed_data)
+```
+
+```{r}
+# Convert ca and thal to factors with predefined levels
+dataset$ca <- factor(dataset$ca, levels = c(0, 1, 2, 3))
+dataset$thal <- factor(dataset$thal, levels = c(3, 6, 7))
+methods <- c("","","","","","","","","","","","pmm","polyreg","","")
+names(methods) <- names(dataset)
+imputed_data <- mice(dataset, method = methods, m = 5, maxit = 100, seed = 123 )
+complete_data <- complete(imputed_data)
+
+#Check patient ID for duplicates
+any(duplicated(complete_data$patient_id))
+
+# Understand the structure of the data
+str(complete_data)
+summary(complete_data)
+
+#Histograms to investigate distribution of numeric variables
+hist(complete_data$age, 
+     main = "Age Distribution", 
+     xlab = "Age", 
+     col = "lightblue", 
+     border = "black")
+
+hist(complete_data$trestbps, 
+     main = "Resting Blood Pressure Distribution", 
+     xlab = "Blood Pressure (mm Hg)", 
+     col = "lightgreen", 
+     border = "black")
+
+hist(complete_data$chol, 
+     main = "Cholesterol Distribution", 
+     xlab = "Cholesterol (mg/dl)", 
+     col = "orange", 
+     border = "black")
+
+hist(complete_data$thalach, 
+     main = "Max Heart Rate Distribution", 
+     xlab = "Heart Rate (bpm)", 
+     col = "purple", 
+     border = "black")
+plot(density(complete_data$oldpeak, na.rm = TRUE), 
+     main = "Density of ST Depression (Oldpeak)", 
+     xlab = "Oldpeak", 
+     col = "red", 
+     lwd = 2)
+
+#Barplots for categorical variables that show the frequency of each category
+barplot(table(complete_data$sex), 
+        main = "Sex Distribution", 
+        xlab = "Sex (1 = Male, 0 = Female)", 
+        ylab = "Frequency", 
+        col = "lightblue")
+barplot(table(complete_data$cp), 
+        main = "Chest Pain Type Distribution", 
+        xlab = "Chest Pain Type", 
+        ylab = "Frequency", 
+        col = "lightgreen")
+barplot(table(complete_data$fbs), 
+        main = "Fasting Blood Sugar Distribution", 
+        xlab = "Fasting Blood Sugar (>120 mg/dl)", 
+        ylab = "Frequency", 
+        col = "orange")
+barplot(table(complete_data$restecg), 
+        main = "Resting ECG Distribution", 
+        xlab = "Resting ECG", 
+        ylab = "Frequency", 
+        col = "purple")
+barplot(table(complete_data$exang), 
+        main = "Exercise-Induced Angina Distribution", 
+        xlab = "Exercise-Induced Angina (1 = Yes, 0 = No)", 
+        ylab = "Frequency", 
+        col = "red")
+barplot(table(complete_data$slope), 
+        main = "Slope of Peak Exercise Distribution", 
+        xlab = "Slope", 
+        ylab = "Frequency", 
+        col = "cyan")
+barplot(table(complete_data$ca), 
+        main = "Number of Major Vessels Distribution", 
+        xlab = "Number of Vessels", 
+        ylab = "Frequency", 
+        col = "pink")
+barplot(table(complete_data$thal), 
+        main = "Thalassemia Distribution", 
+        xlab = "Thalassemia", 
+        ylab = "Frequency", 
+        col = "purple")
+barplot(table(complete_data$num), 
+        main = "Disease Outcome Distribution", 
+        xlab = "Disease Outcome", 
+        ylab = "Frequency", 
+        col = "orange")
+
+
+```
+
+Insights from the Exploratory Data Analysis (EDA)
+
+The EDA on the heart disease dataset involved preprocessing, handling missing values, and visualizing key attributes to understand their distributions. The dataset was cleaned by converting categorical variables into factors, imputing missing values using the mice package, and checking for duplicates.
+
+Key Insights: Age Distribution: The dataset primarily consists of middle-aged individuals, with most patients between 50 and 60 years old. Blood Pressure & Cholesterol: Resting blood pressure is mostly between 100 and 140 mm Hg, while cholesterol levels show a right-skewed distribution, with many values between 200-300 mg/dL and some extreme cases. Max Heart Rate: The majority of patients have a max heart rate between 120 and 170 bpm, which follows a near-normal distribution. Chest Pain Types: Most patients experience asymptomatic chest pain (type 4), indicating that many do not have typical angina symptoms. Fasting Blood Sugar & ECG: Most patients have normal fasting blood sugar, and ECG results show that normal readings (category 0) are the most common. Number of Major Vessels & Disease Outcome: The majority of patients have no major vessels affected (ca = 0), and most do not have severe heart disease (num = 0), making it an imbalanced dataset.
+
+## 1.2. Create visualizations in order to show which variables seem to be more associated with heart disease
+
+```{r}
+#num variable represents heart disease outcomes and thus we can analyze how each variable relates to it
+library(ggplot2)
+
+#Sex vs. Heart Disease
+ggplot(complete_data, aes(x = factor(sex), fill = factor(num))) +
+  geom_bar(position = "fill") +
+  labs(title = "Proportion of Heart Disease by Sex", 
+       x = "Sex (1 = Male, 0 = Female)", 
+       y = "Proportion", 
+       fill = "Heart Disease") +
+  theme_minimal()
+
+#Chest pain type vs. Heart Disease
+ggplot(complete_data, aes(x = factor(cp), fill = factor(num))) +
+  geom_bar(position = "fill") +
+  labs(title = "Proportion of Heart Disease by Chest Pain Type", 
+       x = "Chest Pain Type", 
+       y = "Proportion", 
+       fill = "Heart Disease") +
+  theme_minimal()
+
+#Numeric variables
+#Age vs. Heart Disease
+ggplot(complete_data, aes(x = factor(num), y = age, fill = factor(num))) +
+  geom_boxplot() +
+  labs(title = "Age Distribution by Heart Disease Status", 
+       x = "Heart Disease Status", 
+       y = "Age", 
+       fill = "Heart Disease") +
+  theme_minimal()
+
+#Cholesterol vs. Heart Disease
+ggplot(complete_data, aes(x = factor(num), y = chol, fill = factor(num))) +
+  geom_boxplot() +
+  labs(title = "Cholesterol Levels by Heart Disease Status", 
+       x = "Heart Disease Status", 
+       y = "Cholesterol", 
+       fill = "Heart Disease") +
+  theme_minimal()
+
+#Maximum Heart Rate vs. Heart Disease
+ggplot(complete_data, aes(x = factor(num), y = thalach, fill = factor(num))) +
+  geom_boxplot() +
+  labs(title = "Max Heart Rate by Heart Disease Status", 
+       x = "Heart Disease Status", 
+       y = "Max Heart Rate", 
+       fill = "Heart Disease") +
+  theme_minimal()
+
+#Correlation Analysis
+cor_matrix <- cor(complete_data[, sapply(complete_data, is.numeric)])
+cor_with_disease <- cor_matrix["num", ]
+print(cor_with_disease)
+
+barplot(abs(cor_with_disease[-which(names(cor_with_disease) == "num")]), 
+        main = "Correlation with Heart Disease", 
+        xlab = "Variables", 
+        ylab = "Correlation Coefficient", 
+        col = "blue", 
+        las = 2)
+
+#The variables with the highest correlation are cp, oldpeak, exang, thalach, slope, ca, age in this order.
+#They must be investigated more
+
+#Violin plot for Max Heart Rate achieved vs. Heart Disease
+ggplot(complete_data, aes(x = factor(num), y = thalach, fill = factor(num))) +
+  geom_violin(trim = FALSE) +
+  geom_boxplot(width = 0.1, outlier.color = "red", alpha = 0.5) +
+  labs(title = "Distribution of Max Heart Rate by Heart Disease Status", 
+       x = "Heart Disease Status", 
+       y = "Max Heart Rate") +
+  theme_minimal()
+
+library(ggridges)
+ggplot(complete_data, aes(x = oldpeak, y = factor(num), fill = factor(num))) +
+  geom_density_ridges(alpha = 0.7) +
+  labs(title = "Distribution of ST Depression by Heart Disease Status", 
+       x = "ST Depression (Oldpeak)", 
+       y = "Heart Disease Status", 
+       fill = "Heart Disease") +
+  theme_minimal()
+
+ggplot(complete_data, aes(x = oldpeak, y = thalach, color = factor(num))) +
+  geom_point(size = 2, alpha = 0.7) +
+  geom_density_2d() +
+  labs(title = "Max Heart Rate vs. ST Depression by Heart Disease Status", 
+       x = "ST Depression (Oldpeak)", 
+       y = "Max Heart Rate", 
+       color = "Heart Disease Status") +
+  theme_minimal()
+
+#Pairwise scatterplots with num grouping
+library(GGally)
+ggpairs(complete_data, 
+        columns = c("age", "trestbps", "chol", "thalach", "oldpeak"), 
+        aes(color = factor(num), alpha = 0.7)) +
+  theme_minimal() +
+  labs(title = "Pairwise Relationships by Heart Disease Status")
+
+#Conditional Density for Age
+ggplot(complete_data, aes(x = age, fill = factor(num))) +
+  geom_density(alpha = 0.6) +
+  labs(title = "Age Distribution by Heart Disease Status", 
+       x = "Age", 
+       y = "Density", 
+       fill = "Heart Disease Status") +
+  theme_minimal()
+
+#Heatmap
+
+library(corrplot)
+cor_matrix <- cor(complete_data[, c("age", "trestbps", "chol", "thalach", "oldpeak")], 
+                  use = "complete.obs")
+corrplot(cor_matrix, method = "color", addCoef.col = "black", tl.col = "black", 
+         title = "Correlation Between Variables")
+
+#Interaction Plot for oldpeak and thalach
+library(interactions)
+interaction_model <- lm(num ~ oldpeak * thalach, data = complete_data)
+interact_plot(interaction_model, pred = oldpeak, modx = thalach, 
+              modx.values = "terciles", plot.points = TRUE) +
+  labs(title = "Interaction Between ST Depression and Max Heart Rate", 
+       x = "ST Depression (Oldpeak)", 
+       y = "Heart Disease Probability")
+
+#PCA
+library(ggfortify)
+pca_model <- prcomp(complete_data[, sapply(complete_data, is.numeric)], center = TRUE, scale. = TRUE)
+autoplot(pca_model, data = complete_data, colour = "num") +
+  labs(title = "PCA of Heart Disease Dataset", 
+       x = "Principal Component 1", 
+       y = "Principal Component 2", 
+       color = "Heart Disease Status")
+
+```
+
+We created a big number of different plots in order to try and understand this dataset (some of them not so clear and matching with this data but we tried a lot just to understand).
+
+Key Trends and Correlations with Heart Disease From all the visualizations and analyses, several strong trends emerge regarding factors most correlated with heart disease:
+
+ST Depression (Oldpeak) is the strongest predictor
+
+Higher oldpeak values (ST depression induced by exercise) are clearly associated with more severe heart disease. This makes sense because ST depression reflects ischemia, meaning that the heart is not getting enough oxygen during exertion. The interaction plots and scatterplots confirm that as oldpeak increases, the probability of heart disease rises, particularly when max heart rate is low.
+
+Max Heart Rate (Thalach) is inversely correlated with heart disease
+
+Patients with heart disease tend to have a lower max heart rate, while those without it reach higher heart rate levels. This makes sense physiologically, as a lower max heart rate indicates reduced cardiovascular efficiency and possible arterial blockages.
+
+Chest Pain Type (CP) is highly associated with heart disease
+
+Patients with asymptomatic chest pain (type 4) have the highest proportion of heart disease cases. Meanwhile, those with typical angina (type 1) have the lowest risk.
+
+Exercise-Induced Angina (Exang) is another key predictor
+
+Patients who experience exercise-induced angina are far more likely to have heart disease.
+
+The Slope of the ST Segment (Slope) provides additional predictive power
+
+Patients with a flat or downsloping ST segment (slope = 2 or 3) tend to have more severe heart disease. A downsloping ST segment is often a marker of ischemia and poor prognosis, making it an important feature in diagnostics.
+
+Age is moderately correlated with heart disease severity
+
+Older individuals tend to have higher disease severity, but some younger patients also show heart disease presence. This suggests that while age is a risk factor, it is not a definitive indicator—lifestyle, genetics, and other health conditions also play roles.
+
+Cholesterol and Resting Blood Pressure (Trestbps) show weak correlation
+
+Despite being common risk factors for cardiovascular disease, cholesterol and blood pressure do not strongly correlate with heart disease presence in this dataset. This could be due to the fact that cholesterol levels fluctuate based on diet and medication use, and resting blood pressure alone does not capture dynamic heart function under stress.
+
+# 2. Difference in mortality rates in hospitalized COVID-19 patients
+
+Using the supplementary material from the [Difference in mortality rates in hospitalized COVID-19 patients identified by cytokine profile clustering using a machine learning approach: An outcome prediction alternative](https://www.frontiersin.org/articles/10.3389/fmed.2022.987182/full), perform the following tasks
+
+## 2.1. Reproduce Figure 1 from the publication
+
+```{r echo=TRUE}
+library(ggplot2)
+library(pheatmap) 
+library(dplyr)
+library(readxl)     
+library(ComplexHeatmap)  
+library(gridExtra)  
+library(kableExtra)
+library(tidyr)
+
+# library(knitr)
+
+# Load clinical data from supplementary tables
+clinical_data <- read_excel("data_article/Table 1.XLSX", skip=1)  
+
+# Check the structure of the data
+str(clinical_data)
+head(clinical_data)
+
+# Convert Death column to binary (0 = No, 1 = Yes)
+clinical_data$Death <- ifelse(clinical_data$Death == "Yes", 1, 0)
+
+# Convert categorical variables to factors
+clinical_data$Gender <- factor(clinical_data$Gender, levels = c("M", "F"))
+clinical_data$`Admission to ICU` <- factor(clinical_data$`Admission to ICU`, levels = c("No", "Yes"))
+clinical_data$`ARDS Diagnosis` <- factor(clinical_data$`ARDS Diagnosis`, levels = c("No", "Yes"))
+
+# Create Clinical Classification (G1-G4)
+clinical_data$Group <- with(clinical_data, ifelse(
+  `ARDS Diagnosis` == "No" & `Use of AMV` == "No" & `Use of NIV` == "No", "G1",
+  ifelse(`ARDS Diagnosis` == "No" & `Use of AMV` != "No", "G2",
+         ifelse(`ARDS Diagnosis` == "Yes" & `Use of AMV` == "No", "G3", "G4")
+  )
+))
+
+# Convert Group to factor
+clinical_data$Group <- factor(clinical_data$Group, levels = c("G1", "G2", "G3", "G4"))
+
+# Load necessary library
+library(gridExtra)
+
+# Set up layout for 4 panels (A, B, C, D)
+layout(matrix(c(1, 2, 3, 4), ncol = 2, byrow = TRUE), widths = c(2, 2), heights = c(2, 2))
+par(mar = c(5, 5, 3, 2)) 
+
+# ------------------- PANEL A: Age Distribution (Histogram) -------------------
+hist(clinical_data$Age, 
+     breaks = seq(20, 100, by = 10), 
+     col = "#e0edec", 
+     border = "black",
+     main = "Age",
+     xlab = "Age (years)", 
+     ylab = "Frequency (n)", 
+     axes = TRUE)
+
+# ------------------- PANEL B: Clinical Classification Table -------------------
+par(mar = c(0, 0, 0, 0)) # Remove margins
+plot.new()  # Create blank plot area
+
+# Add small title
+title(xlab = expression(bold("Definition of the clinical classification")), 
+      line = -12.5, adj = 0.5, cex.lab = 1.2) 
+
+# Define table content
+table_content <- as.matrix(data.frame(
+  "Clinical\nClassification" = c("G1", "G2", "G3", "G4"),
+  NIV = c("−", "−/+", "+", "−/+"),
+  AMV = c("−", "+/−", "−", "+"),
+  ARDS = c("−", "−", "+", "+"),
+  check.names = FALSE  # Prevents automatic conversion of spaces to underscores
+))
+
+# Define table styling
+table_theme <- ttheme_default(
+  colhead = list(
+    bg_params = list(fill = "#d1d0d0"),  # Darker gray for column headers
+    fg_params = list(fontface = "bold")  # Bold for column headers
+  ),
+   colhead = list(
+    fg_params = list(fontface = "bold", fontsize = 6)  # Smaller and bold font for column headers
+  )
+)
+
+# Force table into upper-right panel
+vp <- viewport(x = 0.52, y = 1.1, width = 0.5, height = 0.8, just = c("left", "top"))
+pushViewport(vp)
+grid.table(table_content, theme = table_theme)
+popViewport()
+
+# ------------------- PANEL C: Clinical Classification Barplot -------------------
+par(mar = c(5, 5, 3, 2)) 
+group_counts <- table(clinical_data$Group)
+bar_colors <- c("#96d0cb", "#f7f5b5", "#b9b9dc", "#e98f80")
+
+bp <- barplot(group_counts, 
+              col = bar_colors, 
+              border = "black", 
+              ylim = c(0, 80), 
+              main = "Clinical classification", 
+              ylab = "Frequency (n)",
+              xlab = "Clinical classification",
+              names.arg = c("G1", "G2", "G3", "G4"))
+
+# Add numbers above bars
+text(bp, group_counts + 3, labels = group_counts, cex = 1)
+
+# ------------------- PANEL D: Vital Status Barplot -------------------
+death_counts <- table(clinical_data$Death)
+bp <- barplot(death_counts, 
+              col = c("#96d0cb", "#f7f5b5"), 
+              border = "black", 
+              ylim = c(0, 160), 
+              main = "Vital status", 
+              ylab = "Frequency (n)",
+              xlab="Death",
+              names.arg = c("No", "Yes"))
+
+# Add numbers directly above bars
+text(bp, death_counts + 5, labels = death_counts, cex = 1)  
+
+
+
+```
+
+I tried my best, but I really don't know how to center the table and make it look correct because it has a fixed size while the plots adjust wheher n we move in and out. I think the easiest approach would be to create the separate plots and the table and merge them with another tool.
+
+## 2.2. Reproduce Figure 2 from the publication but instead of representing the clusters in the annotation, represent the groups (G1 to G4)
+
+### 2.2.1. Loading and cleaning the data
+
+```{r echo=TRUE}
+library(circlize)
+
+# Load the data for cytokines
+clinical_data_2 <- read_excel("data_article/Table 2.XLSX", skip = 1)  
+```
+
+If we take a look at the data we will see that we have many missing values on the first columns (ID), that is because if we have more than one measure, taken in different days, only the first measure has the ID. So we want fill the missing IDs with the last non-missing value. We can do so with the function `fill()` from the package `tidyr`.
+
+Afterwards, the investigators performed the clustering using the data from 13 cytokines: IL-1 beta, IL-6, IL-8, IL-10, IL-17, TNF, IFNalpha, IFN-gamma, CXCL10, CCL2, CCL3, G-CSF and IL-38. However on the data-set and the image IL-17 is missing.
+
+Additionally, we have missing values, marked as NI, so we want to change them to NA.
+
+Finally, now some patients have many cytokines values, which we don't want. According to the article, *only the median value of each cytokine or laboratory parameter was considered to compare patients*. So we will do the same. To do so we will transform our data-set to a long format, using `pivot_longer()`, which will contains the IDs and Day as normal and the cytokine name. Then we will make sure all the measurements are numeric and finally we will perform the mean.
+
+```{r}
+colnames(clinical_data_2)[1] <- "ID"
+clinical_data_2 <- clinical_data_2 |>
+  fill(ID, .direction = "down")
+
+clinical_data_2[clinical_data_2 == "NI"] <- NA
+
+clinical_data_2 <- clinical_data_2[, 1:14]
+
+long_clinical_data_2 <- clinical_data_2 |>
+  pivot_longer(
+    cols = c(-ID, -Day),                        
+    names_to = "Cytokine",           
+    values_to = "Measurement"
+  )
+  
+long_clinical_data_2$Measurement <- as.numeric(long_clinical_data_2$Measurement)
+
+average_clinical_data_2 <- long_clinical_data_2 |>
+  group_by(ID, Cytokine) |>
+  summarise(Mean_Measurement = mean(Measurement, na.rm = TRUE), .groups = "drop")
+
+final_clinical_data_2 <- average_clinical_data_2 |>
+  pivot_wider(
+    names_from = Cytokine,          
+    values_from = Mean_Measurement    
+  )
+
+final_clinical_data_2 <- as.data.frame(final_clinical_data_2)
+
+dim(final_clinical_data_2)
+```
+
+Now we have a data-set that is almost like the one the investigators used, with 194 patients as the rows and 12 cytokines as columns instead of 13.
+
+It is not mentioned if some sort of standardization was performed, on Figure 2 it says that *median value for each cytokine was used to create profiles or clusters*. Thus, we consider that we can use the values as they are currently.
+
+However, there are some patients that lack IL-6 values, to avoid losing information, we will try to generate the data using the function `mice()`.
+
+```{r}
+imputed_data <- mice(final_clinical_data_2, m = 5, method = 'pmm', seed = 1, maxit = 100,)
+final_clinical_data_2 <- complete(imputed_data, 1 )
+```
+
+Finally, we want to add the group of each patient.
+
+```{r}
+labels <- clinical_data[, c(1,19)]
+labels <- labels[which(duplicated(labels$ID)==FALSE),]
+labels <- labels[which(!is.na(labels$Group)),]
+final_clinical_data_2 <- merge(final_clinical_data_2, labels, by = "ID")
+dim(final_clinical_data_2)
+```
+
+Sadly we have lost some patients that don't have an associated group.
+
+### 2.2.3. Heat map
+
+Currently on our data-set we have the raw expression of the cytokines. However, on the Figure 2 the values are in "Relative Expression". That means we will normalize the expression and convert the minimum value to 0%, the maximum to 100% and the rest an in-between.
+
+```{r}
+normalize_to_percent <- function(x) {
+  return((x - min(x)) / (max(x) - min(x)) * 100)
+}
+numeric_data <- final_clinical_data_2[sapply(final_clinical_data_2, is.numeric)]
+non_numeric_data <- final_clinical_data_2[, !sapply(final_clinical_data_2, is.numeric)]
+
+normalized_clinical_data_2 <- as.data.frame(lapply(numeric_data, normalize_to_percent))
+
+final_data_2 <- cbind(non_numeric_data, normalized_clinical_data_2)
+colnames(final_data_2)[2] <- "Group"
+rownames(final_data_2) <- final_data_2[,1]
+final_data_2 <- final_data_2[, -1]
+final_data_2$Group <- as.factor(final_data_2$Group)
+
+summary(final_data_2)
+```
+
+We can see that indeed all numerical attributes have a minimum of 0 and a maximum of 100. Now we can plot the heat-map.
+
+```{r}
+library(RColorBrewer)
+
+final_data_2_heatmap <- as.matrix(final_data_2[, -which(names(final_data_2) == "Group")])
+
+cytokine_order <- c("IL.6", "CXCL10", "IL.38", "IL.8", "IFN.ɑ", "IL.10", "TNF.ɑ", "CCL2", "CCL3", "IFN.γ", "IL.1β", "G.CSF")
+
+final_data_2_heatmap <- final_data_2_heatmap[, cytokine_order]
+
+orange_palette <- brewer.pal(9, "Oranges")
+group_colors <- brewer.pal(4, "Set2") 
+
+pheatmap(t(final_data_2_heatmap),
+         cluster_rows = TRUE,
+         cluster_cols = TRUE,
+         show_rownames = TRUE, 
+         show_colnames = FALSE, 
+         color = orange_palette,  
+         annotation_col = non_numeric_data[, "Group", drop = FALSE],  
+        annotation_colors = list(Group = setNames(group_colors, c("G1", "G2", "G3", "G4"))),
+         legend = TRUE,
+)
+```
+
+## 2.3. Improve Figure 2 of the publication
+
+Add a second annotation with information of death and a third one with information of gender
+
+```{r}
+death <- clinical_data[, c(1,18)]
+# gender <- clinical_data[, c(1, 3)]
+final_data_2$ID <- rownames(final_data_2)
+final_data_2 <- final_data_2[, -2]
+final_data_2 <- merge(final_data_2, death, by = "ID")
+final_data_2$Death <- factor(final_data_2$Death, levels = c(0, 1), labels = c("Alive", "Dead"))
+
+final_data_2_heatmap <- as.matrix(final_data_2[, -which(names(final_data_2) == "Death")])
+final_data_2_heatmap <- final_data_2_heatmap[, - c(1,2)]
+
+non_numeric_data <- final_data_2[, !sapply(final_data_2, is.numeric)]
+
+orange_palette <- brewer.pal(9, "Oranges")
+group_colors <- c("Alive" = "blue", "Dead" = "red")
+
+pheatmap(t(final_data_2_heatmap),
+         cluster_rows = TRUE,
+         cluster_cols = TRUE,
+         show_rownames = TRUE, 
+         show_colnames = FALSE, 
+         color = orange_palette,  
+         annotation_col = non_numeric_data[, "Death", drop = FALSE],  
+        annotation_colors = list(Dead = group_colors),
+         legend = TRUE,
+)
+```
+
+We are not sure why the colors don't show in this graph. I apologize because I didn't have time to finish the second grap.
+
+# session info {.unnumbered}
+
+```{r, results='asis',  echo=FALSE, message=FALSE }
+sessionInfo()
+```
